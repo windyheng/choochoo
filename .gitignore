@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Env / secrets
+.env
+
+# Data & model artifacts — never commit these
+data/raw/
+data/cache/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# results/ (robustness table, error-analysis thumbnails) is a required
+# deliverable — keep it committed, do NOT gitignore it.
