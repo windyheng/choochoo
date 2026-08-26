@@ -75,6 +75,6 @@ what to look for (FP/FN clustering by transform severity, threshold trade-offs).
 | CLIP Branch Lead | _name_ | `models/backbone_clip.py`, fusion head design, CLIP explainability |
 | SRM Branch Lead | _name_ | `models/artifact_branch.py`, SRM explainability |
 | Training/Infra Lead | _name_ | `train.py`, `configs/`, checkpoint/resume, ablations |
-| Eval & Deliverables Lead | _name_ | `evaluate.py`, `infer.py`, `error_analysis.py`, README/Devpost/demo video |
+| Eval & Deliverables Lead | Jerry | `evaluate.py`, `infer.py`, `error_analysis.py`, README/Devpost/demo video |
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch naming and PR flow.
