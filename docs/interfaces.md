@@ -37,6 +37,15 @@ it by settling this on Day 1.
   "gaussian blur" or "jpeg compress" exist anywhere else in the repo.
 - Severities must match `configs/train.yaml`'s `augmentation` section exactly.
 
+- `apply_named(image, name, severity)` dispatch names, fixed by `evaluate.py`
+  (Eval & Deliverables Lead) — implement `apply_named` to route these exact
+  strings to the matching function: `"jpeg"` -> `jpeg_compress`, `"blur"` ->
+  `gaussian_blur`, `"resize"` -> `resize_then_upscale`, `"noise"` ->
+  `gaussian_noise`, `"color_jitter"` -> `color_jitter`, `"crop"` ->
+  `center_crop`. `severity` is the raw value from the corresponding
+  `*_SEVERITIES`/`*_SCALES`/`*_PCT`/`*_FRAC` constant (e.g. `("jpeg", 70)`,
+  `("crop", 0.80)`).
+
 ## 5. `infer.py` contract (owned by Eval & Deliverables Lead) — hard requirement
 
 - CLI: `python infer.py --input_dir <dir> --out preds.json`
