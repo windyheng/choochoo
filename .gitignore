@@ -7,9 +7,7 @@ __pycache__/
 # Env / secrets
 .env
 
-# Data & model artifacts — never commit these
-data/raw/
-data/cache/
+# Model artifacts — never commit these
 checkpoints/
 *.pt
 *.pth
