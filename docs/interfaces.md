@@ -38,6 +38,8 @@ it by settling this on Day 1.
 
 ## 3. Fusion head input (owned by Training/Infra Lead)
 
+> Full design: [`docs/specs/2026-08-29-fusion-head-design.md`](specs/2026-08-29-fusion-head-design.md) — architecture, calibration, ablation/branch-selection. The `forward()` contract below stays authoritative.
+
 **Implemented** (in `models/fusion_head.py`) — by Eval & Deliverables Lead,
 ahead of the Training/Infra Lead, to unblock `infer.py`/`evaluate.py`'s real
 scoring path. Architecture is a straight port of `train.py`'s
