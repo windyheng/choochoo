@@ -37,14 +37,15 @@ it by settling this on Day 1.
   "gaussian blur" or "jpeg compress" exist anywhere else in the repo.
 - Severities must match `configs/train.yaml`'s `augmentation` section exactly.
 
-- `apply_named(image, name, severity)` dispatch names, fixed by `evaluate.py`
-  (Eval & Deliverables Lead) — implement `apply_named` to route these exact
-  strings to the matching function: `"jpeg"` -> `jpeg_compress`, `"blur"` ->
-  `gaussian_blur`, `"resize"` -> `resize_then_upscale`, `"noise"` ->
-  `gaussian_noise`, `"color_jitter"` -> `color_jitter`, `"crop"` ->
-  `center_crop`. `severity` is the raw value from the corresponding
-  `*_SEVERITIES`/`*_SCALES`/`*_PCT`/`*_FRAC` constant (e.g. `("jpeg", 70)`,
-  `("crop", 0.80)`).
+- `apply_named(image, name, severity)` dispatch names — **as implemented**:
+  `"jpeg_quality"` -> `jpeg_compress`, `"blur_sigma"` -> `gaussian_blur`,
+  `"resize_scale"` -> `resize_then_upscale`, `"noise_sigma"` ->
+  `gaussian_noise`, `"color_jitter_pct"` -> `color_jitter`,
+  `"center_crop_frac"` -> `center_crop` — matching `configs/train.yaml`'s
+  `augmentation` keys exactly. `data/transforms.py` also exposes
+  `TRANSFORM_SEVERITIES: dict[name, list[severity]]` as the canonical
+  name/severity source; `evaluate.py` iterates that directly rather than
+  hardcoding its own copy.
 
 ## 5. `infer.py` contract (owned by Eval & Deliverables Lead) — hard requirement
 
@@ -53,3 +54,34 @@ it by settling this on Day 1.
   `{"image_path": "<path>", "pred": <float in [0, 1]>}`
 - `pred` = probability/confidence the image is AI-generated (higher = more
   likely AIGC). This exact schema is graded — do not change field names.
+- `infer.py::load_model(checkpoint_path)` / `infer.py::predict(image, model)`
+  are the single scoring path — evaluate.py's `load_predict_fns` wraps these
+  rather than loading the checkpoint a second way, so "the script that
+  produces confidence scores" and "the scores that feed the evaluation
+  matrix" can't drift apart.
+- Graded metric is AUC (ranking-based), not calibrated probability — `pred`
+  still must be a real [0, 1] score for the JSON contract and for the
+  threshold-based FPR/FNR discussion below, but Platt/temperature scaling is
+  not required to score well.
+
+## 6. `results/predictions.csv` contract (owned by Eval & Deliverables Lead)
+
+- Written by `evaluate.py::write_predictions_csv` (via `collect_predictions`),
+  consumed by `error_analysis.py::load_predictions`.
+- Columns: `image_path, label, condition, branch, pred` — one row per
+  (sample, condition) pair, `branch` always `"full"` (ablation branches don't
+  need per-image dumps). `condition` matches `evaluate.py::iter_conditions`'s
+  labels (e.g. `"clean"`, `"jpeg_quality_70"`).
+- This is distinct from `results/robustness_table.csv` (aggregate metrics
+  only, no `image_path`) — error_analysis.py needs the per-image trace to
+  mine and thumbnail representative false positives/negatives.
+
+## 7. Graded technical result (owned by Eval & Deliverables Lead)
+
+- `evaluate.py::combined_auc_summary` reduces the robustness matrix to the
+  actual graded number per branch: clean AUC, mean AUC across every
+  individual transformed condition (the combined resize->JPEG condition is
+  excluded — bonus differentiator, not part of the graded score), and their
+  average (`combined_auc`).
+- Augmentations are evaluated individually per the brief; the combined
+  condition stays in the matrix for the write-up but isn't required.
