@@ -26,7 +26,18 @@ here.
 | Input | Shape | Notes |
 |---|---|---|
 | `clip_embed` | `[B, 512]` float32 | L2-normalized (unit vectors). From `data/clip_embedding_cache.py` for clean images, or live `CLIPBackbone.embed()` for augmented ones. |
-| `srm_embed` | `[B, 32]` float32 | `ArtifactBranch.embed()`, live only (cheap; not cached). ReLU-`AdaptiveAvgPool`-ed → **non-negative, unbounded scale**. |
+| `srm_embed` | `[B, 32]` float32 | `ArtifactBranch.embed()`, live only (cheap; not cached). ReLU-`AdaptiveAvgPool`-ed → non-negative. Measured scale below. |
+
+**Measured embedding scales** (64 real CIFAKE images, CLIP + untrained SRM):
+
+| | per-component mean \|val\| | row L2-norm |
+|---|---|---|
+| `clip_embed` | 0.023 | 1.00 (constant — normalized) |
+| `srm_embed` (untrained) | 0.016 | 0.16 |
+
+In the concatenated `[B, 544]` vector, **CLIP contributes ~6× the L2 energy of
+SRM**. And the SRM half's scale is not fixed — that branch trains from random
+init, so its magnitude drifts across training, whereas CLIP's is frozen.
 
 Concat order is fixed: **`[clip_embed, srm_embed]`** → `x[:, :512]` is CLIP,
 `x[:, 512:]` is SRM. `explainability.py` and `error_analysis.py` slice on this.
@@ -44,14 +55,15 @@ srm_embed  [B,32] ──┘                                                     
 
 Changes from the current placeholder (`Linear → ReLU → Linear`) and why:
 
-- **`BatchNorm1d` on the concatenated input.** The two halves live on
-  incompatible scales — CLIP is a unit vector (per-component magnitude ~0.04),
-  SRM is unbounded non-negative pooled activations that can be orders of
-  magnitude larger. Without normalization the first `Linear` sees SRM dominate
-  and has to learn to down-weight it. BatchNorm standardizes each component and
-  makes the two branches comparable from step 1. (LayerNorm is a fine
-  alternative; BatchNorm chosen because batch size is 64 and the embedding
-  distribution is stationary — the backbone is frozen.)
+- **`BatchNorm1d` on the concatenated input.** Two reasons (see §2 measurements):
+  (a) CLIP contributes ~6× the L2 energy of SRM in the raw concat, so the first
+  `Linear` starts biased toward the CLIP half; (b) more importantly, the SRM
+  branch trains from random init, so its scale *drifts* during training while
+  CLIP's stays fixed — normalizing the input decouples the head from the SRM
+  branch's training dynamics. BatchNorm standardizes each component per batch.
+  (LayerNorm is a fine alternative — see §9 Q1 — and removes the batch-statistics
+  dependency if batch size ends up small; BatchNorm chosen because batch size is
+  64 and CLIP's half of the distribution is stationary.)
 - **`Dropout(0.2)` before the output layer.** ~90k training images vs. a
   ~140k-param head is not a severe overfit risk, but the head *will* be run in
   three ablation configurations and on a small internal val set; light dropout
