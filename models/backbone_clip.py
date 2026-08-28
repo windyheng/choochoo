@@ -58,7 +58,14 @@ class CLIPBackbone(nn.Module):
         self.l2_normalize = l2_normalize
         self.frozen = freeze
 
-        model, _, _ = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
+        # OpenAI's CLIP weights were trained with QuickGELU; open_clip builds
+        # plain GELU by default for the bare "ViT-B-16" name, which silently
+        # produces slightly-off features. force_quick_gelu realigns them.
+        model, _, _ = open_clip.create_model_and_transforms(
+            model_name,
+            pretrained=pretrained,
+            force_quick_gelu=pretrained.startswith("openai"),
+        )
         # Image-only feature extractor: `model.visual(x)` == `encode_image(x, normalize=False)`.
         self.visual = model.visual
 
