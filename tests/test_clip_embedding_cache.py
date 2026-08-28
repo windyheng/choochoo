@@ -5,12 +5,17 @@ the real CLIPBackbone end to end.
 """
 
 import csv
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
 from PIL import Image
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 from data import cache_clip_embeddings as cce
 from data.clip_embedding_cache import CLIPEmbeddingCache
@@ -127,6 +132,19 @@ def test_get_missing_key_raises(tmp_path, tiny_split):
 def test_load_missing_cache_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         CLIPEmbeddingCache.load(tmp_path, "train")
+
+
+def test_cli_runs_as_script_from_any_cwd(tmp_path):
+    """`python data/cache_clip_embeddings.py --help` must work regardless of CWD
+    (regression: importing data.* / models.* when run as a script)."""
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "data" / "cache_clip_embeddings.py"), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--config" in result.stdout
 
 
 @pytest.mark.slow

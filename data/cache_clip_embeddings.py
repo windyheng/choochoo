@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -27,10 +28,14 @@ import torch
 import yaml
 from PIL import Image, UnidentifiedImageError
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# Allow `python data/cache_clip_embeddings.py ...` (script run from inside data/,
+# so the repo root isn't on sys.path by default).
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from data.dataset import CANONICAL_SIZE
 from models.backbone_clip import CLIPBackbone
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CACHE_DIR = REPO_ROOT / "data" / "cache" / "clip_embeddings"
 
 
