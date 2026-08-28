@@ -67,7 +67,12 @@ Image ──┬──> CLIP ViT-B/16 (frozen, ~150M) ──> [CLS embed] ──�
 - CLIP backbone **frozen** — only the small head + artifact-branch CNN are
   trained (cf. Ojha et al. 2023, "Towards Universal Fake Image Detectors,"
   for cross-generator generalization via a frozen CLIP + linear probe).
-  Precompute and cache CLIP embeddings offline since the backbone never updates.
+  Precompute and cache CLIP embeddings offline since the backbone never updates
+  (`data/cache_clip_embeddings.py` -> `data/cache/clip_embeddings/<split>.npz`,
+  float16, L2-normalized). Training augmentation changes ~50% of samples' pixels
+  each epoch, so those embeddings are computed live against the frozen backbone
+  during training; clean samples and all of val/test/eval/ablation are served
+  from the cache.
 - SRM (Spatial Rich Model) filter bank → shallow CNN is the artifact branch;
   cheap, strong on clean/lightly-transformed images; its degradation under
   blur/JPEG is the intended centerpiece of the error-analysis writeup.

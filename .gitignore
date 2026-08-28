@@ -26,3 +26,6 @@ data/raw/**/*.zip
 
 # results/ (robustness table, error-analysis thumbnails) is a required
 # deliverable — keep it committed, do NOT gitignore it.
+
+# Precomputed CLIP embedding cache - regenerate with data/cache_clip_embeddings.py
+data/cache/clip_embeddings/
