@@ -18,10 +18,12 @@ it by settling this on Day 1.
 ## 2. SRM/artifact branch output (owned by SRM Branch Lead) → Fusion head input
 
 - Function: `models/artifact_branch.py::embed(images: Tensor[B, 3, H, W]) -> Tensor[B, D2]`
-- `D2` = ? (depends on chosen shallow-CNN head — decide and record)
-- Input expected: raw pixel images (SRM filters applied inside this module),
-  or pre-filtered residual maps? TODO — pick one, document it
-- Dtype: TODO
+- `D2` = `32` (the default `srm_out_channels` in `configs/train.yaml`)
+- Input expected: raw pixel images; the fixed SRM filter bank is applied inside
+  `ArtifactBranch`, independently to each RGB channel
+- Dtype: float32 input and float32 embedding
+- The branch returns an embedding, not a probability. Its output shape is
+  `[B, 32]` for any input height and width of at least 3 pixels.
 
 ## 3. Fusion head input (owned by Training/Infra Lead)
 
