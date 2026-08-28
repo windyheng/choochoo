@@ -38,11 +38,23 @@ it by settling this on Day 1.
 
 ## 3. Fusion head input (owned by Training/Infra Lead)
 
-- Function: `models/fusion_head.py::forward(clip_embed: Tensor[B, D], srm_embed: Tensor[B, D2]) -> Tensor[B]` (logit or probability — specify which)
+**Implemented** (in `models/fusion_head.py`) — by Eval & Deliverables Lead,
+ahead of the Training/Infra Lead, to unblock `infer.py`/`evaluate.py`'s real
+scoring path. Architecture is a straight port of `train.py`'s
+`DummyFusionHead` (`Linear(clip_dim+srm_dim, hidden_dim) -> ReLU ->
+Linear(hidden_dim, 1)`), since that's what `configs/train.yaml`'s
+`fusion_hidden_dim` and the checkpoint/resume loop were already built
+against. Training/Infra Lead should review and swap the architecture if a
+different design is wanted — the `forward()` contract below is what
+`infer.py`/`evaluate.py`/`explainability.py` actually depend on, not this
+specific architecture.
+
+- Function: `models/fusion_head.py::FusionHead.forward(clip_embed: Tensor[B, D], srm_embed: Tensor[B, D2]) -> Tensor[B]` — returns **logits** (caller applies sigmoid for probability).
 - Concatenation order: **`[clip_embed, srm_embed]`** — CLIP first (dims
   `x[:, :512]`), then SRM (`x[:, 512:]`). Matches `train.py`'s current
   `DummyFusionHead`. `explainability.py` and `error_analysis.py` must slice with
   the same convention.
+- Raises `ValueError` on non-2D input or a clip/srm batch-size mismatch.
 
 ## 4. Shared transform module (owned by Data Lead) → everyone
 
