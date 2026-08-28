@@ -28,7 +28,9 @@ cp .env.example .env   # fill in KAGGLE_USERNAME/KAGGLE_KEY, WANDB_API_KEY, HF_T
 Datasets (see the design doc for full details and links):
 - SID_Set (HuggingFace) and CIFAKE (Kaggle) — downloaded via `data/prepare_datasets.py`.
 - WildFake (ModelScope) — **must be translated via the site's translation button
-  manually before download**; not automatable.
+  manually before download**; not automatable. Already downloaded and published
+  to this repo under `data/raw/wildfake/` (celebahq + DDIM subsets), so this
+  step is only needed if you're refreshing or extending the dataset.
 - COCO val2017 + DALL·E Advanced — demo/validation only, **never used for
   training or hyperparameter selection**.
 
