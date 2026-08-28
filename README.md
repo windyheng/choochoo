@@ -71,10 +71,10 @@ what to look for (FP/FN clustering by transform severity, threshold trade-offs).
 
 | Role | Owner | Scope |
 |---|---|---|
-| Data Lead | _name_ | `data/prepare_datasets.py`, `data/transforms.py`, `data/dataset.py` |
-| CLIP Branch Lead | _name_ | `models/backbone_clip.py`, fusion head design, CLIP explainability |
-| SRM Branch Lead | _name_ | `models/artifact_branch.py`, SRM explainability |
-| Training/Infra Lead | _name_ | `train.py`, `configs/`, checkpoint/resume, ablations |
+| Data Lead | Darren | `data/prepare_datasets.py`, `data/transforms.py`, `data/dataset.py` |
+| CLIP Branch Lead | Windy | `models/backbone_clip.py`, fusion head design, CLIP explainability |
+| SRM Branch Lead | Elodie | `models/artifact_branch.py`, SRM explainability |
+| Training/Infra Lead | Iniyan | `train.py`, `configs/`, checkpoint/resume, ablations |
 | Eval & Deliverables Lead | Jerry | `evaluate.py`, `infer.py`, `error_analysis.py`, README/Devpost/demo video |
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch naming and PR flow.

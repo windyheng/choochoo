@@ -7,9 +7,7 @@ __pycache__/
 # Env / secrets
 .env
 
-# Data & model artifacts — never commit these
-data/raw/
-data/cache/
+# Model artifacts — never commit these
 checkpoints/
 *.pt
 *.pth
@@ -17,6 +15,9 @@ checkpoints/
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+# Raw dataset download archives — kept locally only, extracted images are committed instead
+data/raw/**/*.zip
 
 # OS / editor
 .DS_Store
