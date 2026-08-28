@@ -16,6 +16,9 @@ checkpoints/
 # Notebook checkpoints
 .ipynb_checkpoints/
 
+# Raw dataset download archives — kept locally only, extracted images are committed instead
+data/raw/**/*.zip
+
 # OS / editor
 .DS_Store
 .vscode/
