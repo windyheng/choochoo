@@ -13,3 +13,5 @@ wandb>=0.16
 grad-cam>=1.5
 pytest>=8.0
 pyyaml>=6.0
+pyarrow>=15.0
+python-dotenv>=1.0
