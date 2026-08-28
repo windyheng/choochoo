@@ -26,11 +26,12 @@ augmentation:
 
 train:
   epochs: 10
-  lr: 1e-3
-  weight_decay: 1e-4
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
   checkpoint_dir: checkpoints/
   checkpoint_every_steps: 200
   resume_from_latest: true
+  seed: 42
 
 eval:
   threshold: 0.5   # placeholder — Eval lead sets this from FPR/FNR trade-off analysis
