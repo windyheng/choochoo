@@ -66,8 +66,38 @@ tests/           pytest — transform unit tests, infer.py JSON-contract test
 
 ## Limitations & future work
 
-_Fill in once results are in — see the design doc's error-analysis section for
-what to look for (FP/FN clustering by transform severity, threshold trade-offs)._
+**Current status (as of 2026-08-29):** the CLIP branch, SRM branch, and a
+placeholder fusion head are implemented and unit-tested, but no end-to-end
+training run against real images has completed yet — `train.py` still needs
+to be wired to the CLIP embedding cache (`data/clip_embedding_cache.py`) and
+the real dataset instead of synthetic tensors. `evaluate.py`/`infer.py`'s
+scoring paths are built and tested against dummy models, but not yet run
+against a real checkpoint. The sections below will be filled in with actual
+numbers once that training run produces one — see the design doc's
+error-analysis section for what to look for (FP/FN clustering by transform
+severity, chosen operating threshold and its FPR/FNR trade-off).
+
+Known limitations independent of a trained checkpoint:
+
+- **Fusion head architecture is provisional.** The current
+  `models/fusion_head.py` (`Linear → ReLU → Linear`) is a placeholder;
+  [`docs/specs/2026-08-29-fusion-head-design.md`](docs/specs/2026-08-29-fusion-head-design.md)
+  proposes a `BatchNorm1d + Dropout` version to correct for CLIP and SRM
+  embeddings living on very different scales, pending Training/Infra Lead
+  sign-off.
+- **Individual-transform robustness only.** Per the brief, transforms are
+  evaluated individually (clean, then each transform/severity in isolation);
+  only one combined condition (resize→JPEG, simulating a repost pipeline) is
+  included as a bonus differentiator, not an exhaustive combination sweep.
+- **Ablation branches (`clip_only`/`artifact_only`) aren't wired to a real
+  model yet** — `evaluate.py::load_predict_fns` is still a stub pending the
+  composite model class that combines the three branches under one
+  checkpoint.
+
+_To fill in once a real checkpoint exists: representative FP/FN examples per
+transform/severity bucket, the chosen operating threshold and why (FPR/FNR
+trade-off for a moderation use-case), and what the two-branch ablation
+actually shows about CLIP vs. SRM contribution._
 
 ## Team & contributions
 
