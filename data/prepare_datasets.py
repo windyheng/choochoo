@@ -8,7 +8,9 @@ Responsibilities:
 - Download raw data into data/raw/ (gitignored).
 - Dedup/near-duplicate check across sources and against each other.
 - Build fixed train/val/test split CSVs (image_path, label, source) under
-  data/cache/splits/ (gitignored — regenerate via this script, don't commit).
+  data/cache/splits/ — committed to the repo so the team shares one exact
+  partition (deterministic given --seed); image_path is written REPO_ROOT-
+  relative (see data/paths.py) so the CSVs are portable across machines/OSes.
 - Check and report class balance per source.
 
 Label convention (matches infer.py's "pred = P(AIGC)" contract):
@@ -37,6 +39,7 @@ import argparse
 import csv
 import io
 import random
+import sys
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -46,7 +49,14 @@ import yaml
 from dotenv import load_dotenv
 from PIL import Image
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT_FOR_PATH = Path(__file__).resolve().parent.parent
+# Allow `python data/prepare_datasets.py ...` (script run from inside data/,
+# so the repo root isn't on sys.path by default).
+if str(_REPO_ROOT_FOR_PATH) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT_FOR_PATH))
+
+from data.paths import REPO_ROOT, to_repo_relative
+
 RAW_DIR = REPO_ROOT / "data" / "raw"
 
 REAL_LABEL = 0
@@ -118,7 +128,7 @@ def download_sid_set(raw_dir: Path, num_shards: int) -> Path:
                 img = Image.open(io.BytesIO(row["image"]["bytes"])).convert("RGB")
                 out_path = out_dir / f"{shard_idx:05d}_{i:05d}.jpg"
                 img.save(out_path, "JPEG", quality=95)
-                writer.writerow([str(out_path), label])
+                writer.writerow([to_repo_relative(out_path), label])
                 n_written += 1
             print(f"[sid_set]   -> {n_written} usable images (tampered rows dropped)")
             downloaded.add(shard_name)
@@ -262,12 +272,16 @@ def stratified_split(
 
 
 def write_split_csv(entries: list[dict], out_path: Path) -> None:
+    """Writes image_path as a REPO_ROOT-relative POSIX path (see data/paths.py)
+    so the CSV is portable across machines/OSes rather than hard-wired to
+    whoever generated it — data/dataset.py and data/cache_clip_embeddings.py
+    resolve it back via resolve_image_path()."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["image_path", "label", "source"])
         for e in entries:
-            writer.writerow([e["image_path"], e["label"], e["source"]])
+            writer.writerow([to_repo_relative(e["image_path"]), e["label"], e["source"]])
 
 
 def main():

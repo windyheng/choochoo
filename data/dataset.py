@@ -9,6 +9,11 @@ Images are resized to a fixed CANONICAL_SIZE and returned as float32 tensors
 in [0, 1], channel-first, WITHOUT branch-specific normalization — CLIP's own
 mean/std (or lack of any for the SRM branch) is applied inside each branch's
 embed(), per docs/interfaces.md.
+
+split_csv's image_path is REPO_ROOT-relative (see data/paths.py); resolved
+via resolve_image_path() before opening, but returned to the caller as the
+original relative string (matching the split CSV / predictions.csv format
+error_analysis.py traces back through).
 """
 
 import csv
@@ -19,6 +24,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from data import transforms
+from data.paths import resolve_image_path
 
 CANONICAL_SIZE = (224, 224)  # matches CLIP ViT-B/16's native input resolution
 
@@ -35,7 +41,7 @@ class AIGCDataset(Dataset):
 
     def __getitem__(self, idx):
         image_path, label = self.samples[idx]
-        image = Image.open(image_path).convert("RGB")
+        image = Image.open(resolve_image_path(image_path)).convert("RGB")
 
         if self.augment:
             image = transforms.random_transform(image, self.apply_prob)

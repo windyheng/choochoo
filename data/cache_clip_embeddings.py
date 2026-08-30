@@ -35,6 +35,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from data.dataset import CANONICAL_SIZE
+from data.paths import resolve_image_path
 from models.backbone_clip import CLIPBackbone
 DEFAULT_CACHE_DIR = REPO_ROOT / "data" / "cache" / "clip_embeddings"
 
@@ -46,8 +47,9 @@ def read_split_paths(split_csv: Path) -> list[str]:
 
 def load_image(image_path: str) -> np.ndarray:
     """Same preprocessing as data.dataset.AIGCDataset, minus augmentation:
-    RGB, resized to CANONICAL_SIZE, float32 CHW in [0, 1]."""
-    with Image.open(image_path) as im:
+    RGB, resized to CANONICAL_SIZE, float32 CHW in [0, 1]. image_path is
+    REPO_ROOT-relative (see data/paths.py); resolved before opening."""
+    with Image.open(resolve_image_path(image_path)) as im:
         im = im.convert("RGB").resize(CANONICAL_SIZE, Image.BILINEAR)
     return (np.asarray(im, dtype=np.float32) / 255.0).transpose(2, 0, 1)
 

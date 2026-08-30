@@ -60,6 +60,32 @@ specific architecture.
 
 ## 4. Shared transform module (owned by Data Lead) → everyone
 
+### Split-CSV path convention — **settled**
+
+`data/cache/splits/{train,val,test}.csv` and `data/raw/sid_set/labels.csv`
+store `image_path` as a **POSIX path relative to REPO_ROOT**
+(`Path(__file__).resolve().parent.parent` from any file directly under the
+repo root or one level under it — see `data/paths.py`), e.g.
+`data/raw/cifake/test/FAKE/480.jpg`. Not an absolute path: an absolute path
+is hard-wired to whoever generated the CSV and doesn't resolve on a
+teammate's clone or Colab (see commit fixing this bug, 2026-08-30).
+
+- Write: `data/prepare_datasets.py::write_split_csv` normalizes every
+  `image_path` through `data.paths.to_repo_relative` before writing. Same for
+  `download_sid_set`'s `labels.csv`.
+- Read: anything that opens an image from a split-CSV/`labels.csv`/
+  `predictions.csv` row must resolve it through `data.paths.resolve_image_path`
+  first (anchors a relative path at REPO_ROOT; passes an already-absolute
+  path through unchanged, so ad-hoc absolute input elsewhere, e.g.
+  `infer.py --input_dir`, still works). Implemented in `data/dataset.py`
+  (`AIGCDataset.__getitem__`), `data/cache_clip_embeddings.py` (`load_image`),
+  `evaluate.py` (`_score_samples`), and `error_analysis.py`
+  (`save_thumbnail_grid`).
+- The CSVs are **committed** (not gitignored) — the split is deterministic
+  (`--seed 42`, stratified per source/label), and committing it means every
+  teammate and Colab trains/evals against the exact same partition rather
+  than each regenerating their own.
+
 - `data/transforms.py` must expose the same transform functions/signatures
   used by BOTH training augmentation (`dataset.py`) and evaluation
   (`evaluate.py`). Do not let a second, slightly-different implementation of

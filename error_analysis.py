@@ -20,6 +20,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from data.paths import resolve_image_path
+
 THUMB_SIZE = (96, 96)
 GRID_COLS = 4
 TOP_K = 8
@@ -75,7 +77,7 @@ def save_thumbnail_grid(rows, out_path, thumb_size=THUMB_SIZE, cols=GRID_COLS):
     n_rows = -(-len(rows) // cols)  # ceil
     grid = Image.new("RGB", (thumb_size[0] * cols, thumb_size[1] * n_rows), "white")
     for i, row in enumerate(rows):
-        with Image.open(row["image_path"]) as img:
+        with Image.open(resolve_image_path(row["image_path"])) as img:
             thumb = img.convert("RGB").resize(thumb_size)
         x = (i % cols) * thumb_size[0]
         y = (i // cols) * thumb_size[1]

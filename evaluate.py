@@ -40,6 +40,7 @@ from PIL import Image
 from sklearn.metrics import roc_auc_score
 
 from data import transforms
+from data.paths import resolve_image_path
 
 # name -> list of severities to sweep, reusing data/transforms.py's own
 # canonical dict (its dispatch names, e.g. "jpeg_quality"/"blur_sigma", must
@@ -92,7 +93,7 @@ def _score_samples(samples, predict_fn, steps):
     (per-sample dump for error_analysis.py)."""
     scored = []
     for image_path, label in samples:
-        with Image.open(image_path) as raw:
+        with Image.open(resolve_image_path(image_path)) as raw:
             image = raw.convert("RGB")
         image = _apply_condition(image, steps)
         scored.append((image_path, label, predict_fn(image)))
