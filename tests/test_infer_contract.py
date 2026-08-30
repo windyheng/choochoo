@@ -19,7 +19,7 @@ def test_run_inference_produces_required_schema(tmp_path, monkeypatch):
     for name in ("a.jpg", "b.png"):
         _write_dummy_image(img_dir / name)
 
-    monkeypatch.setattr(infer, "load_model", lambda checkpoint_path: "dummy-model")
+    monkeypatch.setattr(infer, "load_model", lambda checkpoint_path, config_path, branch: "dummy-model")
     monkeypatch.setattr(infer, "predict", lambda image, model: 0.5)
 
     results = infer.run_inference(str(img_dir), checkpoint_path="unused")
@@ -39,7 +39,9 @@ def test_run_inference_loads_model_once(tmp_path, monkeypatch):
 
     load_calls = []
     monkeypatch.setattr(
-        infer, "load_model", lambda checkpoint_path: load_calls.append(checkpoint_path) or "dummy-model"
+        infer,
+        "load_model",
+        lambda checkpoint_path, config_path, branch: load_calls.append(checkpoint_path) or "dummy-model",
     )
     monkeypatch.setattr(infer, "predict", lambda image, model: 0.5)
 
@@ -54,7 +56,7 @@ def test_main_writes_valid_json(tmp_path, monkeypatch):
     _write_dummy_image(img_dir / "a.jpg")
     out_path = tmp_path / "preds.json"
 
-    monkeypatch.setattr(infer, "load_model", lambda checkpoint_path: "dummy-model")
+    monkeypatch.setattr(infer, "load_model", lambda checkpoint_path, config_path, branch: "dummy-model")
     monkeypatch.setattr(infer, "predict", lambda image, model: 0.9)
     monkeypatch.setattr(
         "sys.argv",
