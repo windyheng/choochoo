@@ -6,17 +6,19 @@ resume from the latest checkpoint under configs' checkpoint_dir on restart,
 not assume a single uninterrupted run. Build this before the real training
 run, not after a disconnect eats progress.
 
-The model/dataloader below (DummyFusionHead / DummyEmbeddingDataset) are
-synthetic placeholders standing in for models/backbone_clip.py,
-models/artifact_branch.py, and models/fusion_head.py, whose embedding dims
-are still TODO in docs/interfaces.md. build_model()/build_dataloader() are
-the seam: swap them for the real dataset/FusionHead once those land, the
-loop and checkpoint/resume code below does not need to change.
+build_model()/build_dataloader() assemble the real pipeline: models/backbone_clip.py
+(frozen CLIP, held outside the checkpointed model), models/artifact_branch.py
+and models/fusion_head.py (trainable, wrapped in an nn.ModuleDict). The
+DummyFusionHead / DummyEmbeddingDataset classes below remain only as fast
+scaffolding for tests/test_train.py's checkpoint/resume mechanism tests,
+exercised via train_step()/train()'s default step_fn — real runs go through
+real_train_step() instead (see main()).
 
-Run: python train.py --config configs/train.yaml
+Run: python train.py --config configs/train.yaml [--branch full|clip_only|artifact_only] [--max_steps N]
 """
 
 import argparse
+import functools
 import random
 import re
 from pathlib import Path
@@ -28,9 +30,15 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-# Placeholder dims. D/D2 are still TODO in docs/interfaces.md (real CLIP/SRM
-# branches not built yet) — these are arbitrary stand-ins, not guesses at the
-# eventual real values.
+from data.dataset import AIGCDataset
+from data.paths import REPO_ROOT
+from models.artifact_branch import ArtifactBranch
+from models.backbone_clip import CLIPBackbone
+from models.fusion_head import FusionHead
+
+# Placeholder dims, used only by the Dummy* scaffolding below (the generic
+# checkpoint/resume mechanism tests in tests/test_train.py exercise these,
+# not the real model/dims).
 DUMMY_CLIP_DIM = 512
 DUMMY_SRM_DIM = 64
 DUMMY_DATASET_SIZE = 512
@@ -140,22 +148,28 @@ class DummyEmbeddingDataset(Dataset):
         return self.clip_embeds[idx], self.srm_embeds[idx], self.labels[idx]
 
 
-def build_dataloader(config) -> DataLoader:
-    # Swap: return a DataLoader over data.dataset.AIGCDataset (or precomputed
-    # embeddings) instead — batching setup below stays the same.
-    dataset = DummyEmbeddingDataset(DUMMY_DATASET_SIZE, DUMMY_CLIP_DIM, DUMMY_SRM_DIM)
+def build_dataloader(config, split: str, augment: bool) -> DataLoader:
+    splits_dir = REPO_ROOT / config["data"]["splits_dir"]
+    dataset = AIGCDataset(splits_dir / f"{split}.csv", augment=augment)
     return DataLoader(
         dataset,
         batch_size=config["data"]["batch_size"],
-        shuffle=True,
-        num_workers=0,  # in-memory random tensors; num_workers in config is for real image decoding
+        shuffle=(split == "train"),
+        num_workers=config["data"]["num_workers"],
+        # FusionHead's BatchNorm1d errors on a batch of size 1 in train mode;
+        # drop_last also silently drops a small tail batch every epoch
+        # (e.g. 90598 % 64 = 6 samples on the full train split) — a
+        # negligible, intentional trade-off, not a bug.
+        drop_last=True,
     )
 
 
 class DummyFusionHead(nn.Module):
-    """Placeholder for models.fusion_head.FusionHead (still
-    NotImplementedError, pending D/D2 in docs/interfaces.md). Same
-    forward(clip_embed, srm_embed) -> logits[B] contract."""
+    """Lightweight stand-in for models.fusion_head.FusionHead, kept around so
+    tests/test_train.py can exercise the generic checkpoint/resume mechanism
+    against tiny tensors without paying for BatchNorm1d's batch-size
+    constraints or the real branches. Same forward(clip_embed, srm_embed) ->
+    logits[B] contract as the real FusionHead."""
 
     def __init__(self, clip_dim, srm_dim, hidden_dim=256):
         super().__init__()
@@ -170,10 +184,18 @@ class DummyFusionHead(nn.Module):
         return self.net(x).squeeze(-1)
 
 
-def build_model(config) -> nn.Module:
-    # Swap: return models.fusion_head.FusionHead(clip_dim, srm_dim,
-    # config["model"]["fusion_hidden_dim"]) once implemented and D/D2 settled.
-    return DummyFusionHead(DUMMY_CLIP_DIM, DUMMY_SRM_DIM, config["model"]["fusion_hidden_dim"])
+def build_model(config, branch: str = "full") -> nn.ModuleDict:
+    """Assembles the trainable half of the pipeline: the SRM artifact branch
+    (omitted for a clip_only ablation run) and the fusion head. The frozen
+    CLIP backbone is built separately (see main()) and deliberately kept out
+    of this module tree — it's ~150M deterministic, re-downloadable params
+    that don't belong in every checkpoint written to a Drive-mounted
+    checkpoint_dir."""
+    modules = {}
+    if branch != "clip_only":
+        modules["artifact_branch"] = ArtifactBranch(out_channels=config["model"]["srm_out_channels"])
+    modules["fusion_head"] = FusionHead.from_config(config, branch=branch)
+    return nn.ModuleDict(modules)
 
 
 def build_optimizer(model, config) -> torch.optim.Optimizer:
@@ -198,6 +220,41 @@ def train_step(model, optimizer, batch, device) -> float:
     return loss.item()
 
 
+def compute_pos_weight(dataset: AIGCDataset) -> torch.Tensor:
+    """n_neg / n_pos over dataset.samples, for BCEWithLogitsLoss's pos_weight
+    — CIFAKE is 50/50 but SID_Set/WildFake may not be (see
+    docs/specs/2026-08-29-fusion-head-design.md section 4)."""
+    labels = [label for _, label in dataset.samples]
+    n_pos = sum(labels)
+    n_neg = len(labels) - n_pos
+    return torch.tensor(n_neg / max(n_pos, 1), dtype=torch.float32)
+
+
+def real_train_step(model, optimizer, batch, device, *, backbone, branch, pos_weight=None) -> float:
+    """train_step for the real assembled pipeline: batch is a raw
+    (images, labels, image_paths) triple from data.dataset.AIGCDataset, model
+    is the nn.ModuleDict from build_model(), backbone is the frozen
+    CLIPBackbone built separately in main() (None for an artifact_only run).
+
+    CLIP embeddings are computed with no_grad inside CLIPBackbone.embed
+    (frozen); SRM embeddings are computed with grad enabled so
+    model["artifact_branch"]'s trainable CNN actually trains."""
+    images, labels, _ = batch
+    images = images.to(device)
+    labels = labels.to(device).float()  # AIGCDataset yields plain int labels; BCEWithLogitsLoss needs float
+    if pos_weight is not None:
+        pos_weight = pos_weight.to(device)
+
+    optimizer.zero_grad()
+    clip_embed = backbone.embed(images) if branch != "artifact_only" else None
+    srm_embed = model["artifact_branch"].embed(images) if branch != "clip_only" else None
+    logits = model["fusion_head"](clip_embed, srm_embed)
+    loss = F.binary_cross_entropy_with_logits(logits, labels, pos_weight=pos_weight)
+    loss.backward()
+    optimizer.step()
+    return loss.item()
+
+
 def log(metrics: dict, step: int) -> None:
     formatted = " ".join(f"{k}={v:.4f}" for k, v in metrics.items())
     print(f"step {step} {formatted}")
@@ -214,6 +271,7 @@ def train(
     start_global_step=0,
     device="cpu",
     max_steps=None,
+    step_fn=train_step,
 ) -> int:
     checkpoint_dir = Path(checkpoint_dir)
     steps_per_epoch = len(dataloader)
@@ -230,7 +288,7 @@ def train(
             data_iter = iter(dataloader)
             batch = next(data_iter)
 
-        loss = train_step(model, optimizer, batch, device)
+        loss = step_fn(model, optimizer, batch, device)
         global_step += 1
         epoch = global_step // steps_per_epoch
 
@@ -253,6 +311,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--max_steps", type=int, default=None)
+    parser.add_argument(
+        "--branch", choices=["full", "clip_only", "artifact_only"], default="full"
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -262,7 +323,13 @@ def main():
     checkpoint_dir = Path(config["train"]["checkpoint_dir"])
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    model = build_model(config).to(device)
+    backbone = None
+    if args.branch != "artifact_only":
+        backbone = CLIPBackbone.from_config(config).to(device)
+        backbone.eval()  # frozen; standalone here (not a submodule of model), so not auto-managed by model.train()
+
+    model = build_model(config, branch=args.branch).to(device)
+    model.train()  # FusionHead's BatchNorm1d/Dropout depend on train/eval mode, unlike the old dummy head
     optimizer = build_optimizer(model, config)
 
     start_global_step = 0
@@ -275,7 +342,14 @@ def main():
         else:
             print("no checkpoint found under checkpoint_dir, starting fresh")
 
-    dataloader = build_dataloader(config)
+    # No-aug baseline: augment=False. Real full-scale runs will want
+    # augment=True and a CLIP embedding cache lookup for clean samples — out
+    # of scope for this tiny end-to-end smoke run.
+    dataloader = build_dataloader(config, split="train", augment=False)
+    pos_weight = compute_pos_weight(dataloader.dataset)
+    step_fn = functools.partial(
+        real_train_step, backbone=backbone, branch=args.branch, pos_weight=pos_weight
+    )
     train(
         model,
         dataloader,
@@ -286,6 +360,7 @@ def main():
         start_global_step=start_global_step,
         device=device,
         max_steps=args.max_steps,
+        step_fn=step_fn,
     )
 
 

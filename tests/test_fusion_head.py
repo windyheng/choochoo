@@ -53,3 +53,73 @@ def test_fusion_head_rejects_non_2d_input(clip_embed, srm_embed):
     head = FusionHead(clip_dim=4, srm_dim=4)
     with pytest.raises(ValueError):
         head(clip_embed, srm_embed)
+
+
+def test_fusion_head_rejects_both_dims_zero():
+    with pytest.raises(ValueError):
+        FusionHead(clip_dim=0, srm_dim=0)
+
+
+def test_fusion_head_clip_only_ignores_srm_embed():
+    head = FusionHead(clip_dim=4, srm_dim=0, hidden_dim=8)
+    logits = head(torch.randn(3, 4), None)
+    assert logits.shape == (3,)
+    assert torch.isfinite(logits).all()
+
+
+def test_fusion_head_clip_only_rejects_missing_clip_embed():
+    head = FusionHead(clip_dim=4, srm_dim=0)
+    with pytest.raises(ValueError):
+        head(None, None)
+
+
+def test_fusion_head_artifact_only_ignores_clip_embed():
+    head = FusionHead(clip_dim=0, srm_dim=4, hidden_dim=8)
+    logits = head(None, torch.randn(3, 4))
+    assert logits.shape == (3,)
+    assert torch.isfinite(logits).all()
+
+
+def test_fusion_head_predict_proba_default_temperature_is_plain_sigmoid():
+    head = FusionHead(clip_dim=8, srm_dim=4, hidden_dim=16)
+    head.eval()
+    clip_embed = torch.randn(5, 8)
+    srm_embed = torch.randn(5, 4)
+
+    with torch.no_grad():
+        logits = head(clip_embed, srm_embed)
+        proba = head.predict_proba(clip_embed, srm_embed)
+
+    assert torch.allclose(proba, torch.sigmoid(logits))
+    assert torch.all((proba > 0) & (proba < 1))
+
+
+def test_fusion_head_predict_proba_scales_with_temperature():
+    head = FusionHead(clip_dim=8, srm_dim=4, hidden_dim=16)
+    head.eval()
+    clip_embed = torch.randn(5, 8)
+    srm_embed = torch.randn(5, 4)
+
+    with torch.no_grad():
+        default_proba = head.predict_proba(clip_embed, srm_embed)
+        head.temperature.fill_(2.0)
+        scaled_proba = head.predict_proba(clip_embed, srm_embed)
+
+    assert not torch.allclose(default_proba, scaled_proba)
+
+
+@pytest.mark.parametrize(
+    "branch,expected_clip_dim,expected_srm_dim",
+    [("full", 512, 32), ("clip_only", 512, 0), ("artifact_only", 0, 32)],
+)
+def test_fusion_head_from_config_zeroes_correct_branch(branch, expected_clip_dim, expected_srm_dim):
+    config = {"model": {"clip_model": "ViT-B-16", "srm_out_channels": 32, "fusion_hidden_dim": 16}}
+    head = FusionHead.from_config(config, branch=branch)
+    assert head.clip_dim == expected_clip_dim
+    assert head.srm_dim == expected_srm_dim
+
+
+def test_fusion_head_from_config_rejects_unknown_branch():
+    config = {"model": {"clip_model": "ViT-B-16", "srm_out_channels": 32}}
+    with pytest.raises(ValueError):
+        FusionHead.from_config(config, branch="nonsense")

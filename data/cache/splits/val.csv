@@ -1,4 +1,4 @@
-mage_path,label,source
+image_path,label,source
 data/raw/cifake/train/REAL/0349 (10).jpg,0,cifake
 data/raw/cifake/train/REAL/1029 (10).jpg,0,cifake
 data/raw/cifake/train/FAKE/4766 (6).jpg,1,cifake

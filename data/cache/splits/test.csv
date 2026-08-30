@@ -1,4 +1,4 @@
-mage_path,label,source
+image_path,label,source
 data/raw/cifake/train/FAKE/5131 (6).jpg,1,cifake
 data/raw/wildfake/DDIM/imgs_bedroom/4ee77f8b630aa5ec73e4dc3325e374d3.png,1,wildfake
 data/raw/cifake/train/REAL/3115 (4).jpg,0,cifake
