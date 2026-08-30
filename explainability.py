@@ -10,6 +10,8 @@ wait for the final trained checkpoint, just re-run once it exists.
 from contextlib import contextmanager
 from pathlib import Path
 
+from data.paths import resolve_image_path
+
 
 @contextmanager
 def _record_attention(visual):
@@ -112,7 +114,7 @@ def clip_attention_overlay(
 
     from models.backbone_clip import CLIPBackbone
 
-    image = Image.open(image_path).convert("RGB").resize((224, 224), Image.BILINEAR)
+    image = Image.open(resolve_image_path(image_path)).convert("RGB").resize((224, 224), Image.BILINEAR)
     x = torch.from_numpy(np.asarray(image, dtype=np.float32) / 255.0)
     x = x.permute(2, 0, 1).unsqueeze(0)
 
@@ -140,7 +142,7 @@ def srm_residual_overlay(image_path: str):
 
     from models.artifact_branch import ArtifactBranch
 
-    image = Image.open(image_path).convert("RGB")
+    image = Image.open(resolve_image_path(image_path)).convert("RGB")
     pixels = torch.from_numpy(np.asarray(image, dtype=np.float32) / 255.0)
     pixels = pixels.permute(2, 0, 1).unsqueeze(0)
 
