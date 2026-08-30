@@ -197,6 +197,28 @@ def test_combined_auc_summary_per_branch():
     assert summary["clip_only"]["clean_auc"] == 0.8
 
 
+def test_load_predict_fns_wraps_infer_for_each_branch_given(tmp_path):
+    """Network-free: uses artifact_only (no CLIP download) to prove
+    load_predict_fns builds a working predict_fn per checkpoint given,
+    wrapping infer.py's real load_model/predict."""
+    import train
+
+    config_path = "configs/train.yaml"
+    config = train.load_config(config_path)
+    model = train.build_model(config, branch="artifact_only")
+    optimizer = train.build_optimizer(model, config)
+    ckpt_path = tmp_path / "ckpt.pt"
+    train.save_checkpoint(ckpt_path, model, optimizer, epoch=0, global_step=1)
+
+    predict_fns = evaluate.load_predict_fns({"artifact_only": str(ckpt_path)}, config_path)
+
+    assert set(predict_fns) == {"artifact_only"}
+    image = Image.new("RGB", (64, 64), color=(10, 20, 30))
+    pred = predict_fns["artifact_only"](image)
+    assert isinstance(pred, float)
+    assert 0.0 <= pred <= 1.0
+
+
 def test_write_csv_roundtrip(tmp_path):
     rows = [
         {"branch": "full", "condition": "clean", "auroc": 0.95, "accuracy": 0.9, "fpr": 0.05, "fnr": 0.1},

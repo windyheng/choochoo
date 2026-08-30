@@ -18,9 +18,10 @@ Metric functions here can be unit-tested independently of a real checkpoint
 harness early against a dummy/random model, then re-run once real
 checkpoints land. `evaluate_condition`/`build_robustness_matrix`/
 `run_ablation`/`collect_predictions` take a `predict_fn(PIL.Image) -> float`
-callable, so they're already fully testable; only `load_eval_samples`
-(depends on the Data Lead's split format) and `load_predict_fns` (depends on
-the trained checkpoint + models/*) are stubbed.
+callable, so they're already fully testable. `load_eval_samples` and
+`load_predict_fns` are both implemented for real now (the latter wraps
+infer.py's load_model/predict — see its docstring) but still need an actual
+trained checkpoint from train.py to produce meaningful (non-random) results.
 
 `collect_predictions` dumps one row per (sample, condition) — image_path,
 label, condition, pred — to results/predictions.csv. This is the input
@@ -33,6 +34,7 @@ Run: python evaluate.py --checkpoint <path> --eval_csv <path> --out results/robu
 
 import argparse
 import csv
+import functools
 from pathlib import Path
 
 import numpy as np
@@ -230,31 +232,47 @@ def load_eval_samples(eval_csv: str):
         return [(row["image_path"], int(row["label"])) for row in csv.DictReader(f)]
 
 
-def load_predict_fns(checkpoint_path: str):
-    """Loads the trained fusion model from checkpoint_path and returns a
-    dict of {"full": fn, "clip_only": fn, "artifact_only": fn} predict_fns
-    for the ablation, each mapping a PIL.Image -> float confidence. The
-    "full" entry should wrap infer.py's load_model()/predict() (via
-    `model = infer.load_model(checkpoint_path); lambda image: infer.predict(image, model)`)
-    so the robustness matrix and the required inference script never
-    diverge; "clip_only"/"artifact_only" need extra hooks into the fusion
-    head to score a single branch, not yet exposed by infer.py. Depends on
-    models/backbone_clip.py, models/artifact_branch.py, and
-    models/fusion_head.py existing."""
-    raise NotImplementedError
+def load_predict_fns(checkpoint_paths: dict, config_path: str = "configs/train.yaml"):
+    """checkpoint_paths: {"full": path, "clip_only": path, "artifact_only": path}
+    — a subset is fine, e.g. {"full": path} alone. Each branch is a
+    *separately trained* model (train.py --branch full|clip_only|artifact_only
+    builds a differently-shaped FusionHead per branch, per
+    models/fusion_head.py's `clip_dim`/`srm_dim` may be 0), not one model
+    post-hoc-ablated — so there is no single checkpoint to derive all three
+    from. Returns {branch: predict_fn} for exactly the branches given, each
+    wrapping infer.py's load_model()/predict() (via
+    `model = infer.load_model(path, config_path, branch); lambda image: infer.predict(image, model)`)
+    so the robustness matrix and the required inference script share the
+    identical scoring path."""
+    import infer
+
+    predict_fns = {}
+    for branch, checkpoint_path in checkpoint_paths.items():
+        model = infer.load_model(checkpoint_path, config_path, branch)
+        predict_fns[branch] = functools.partial(infer.predict, model=model)
+    return predict_fns
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--checkpoint", required=True, help="checkpoint for the full (two-branch) model")
+    parser.add_argument("--checkpoint_clip_only", default=None, help="optional, for the ablation")
+    parser.add_argument("--checkpoint_artifact_only", default=None, help="optional, for the ablation")
+    parser.add_argument("--config", default="configs/train.yaml")
     parser.add_argument("--eval_csv", required=True)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--out", default="results/robustness_table.csv")
     parser.add_argument("--predictions_out", default="results/predictions.csv")
     args = parser.parse_args()
 
+    checkpoint_paths = {"full": args.checkpoint}
+    if args.checkpoint_clip_only:
+        checkpoint_paths["clip_only"] = args.checkpoint_clip_only
+    if args.checkpoint_artifact_only:
+        checkpoint_paths["artifact_only"] = args.checkpoint_artifact_only
+
     samples = load_eval_samples(args.eval_csv)
-    predict_fns = load_predict_fns(args.checkpoint)
+    predict_fns = load_predict_fns(checkpoint_paths, args.config)
     rows = run_ablation(samples, predict_fns, threshold=args.threshold)
     write_csv(rows, args.out)
 
