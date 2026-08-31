@@ -30,6 +30,7 @@ import yaml
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from data.clip_embedding_cache import CLIPEmbeddingCache
 from data.dataset import AIGCDataset
 from data.paths import REPO_ROOT
 from models.artifact_branch import ArtifactBranch
@@ -158,9 +159,11 @@ class DummyEmbeddingDataset(Dataset):
         return self.clip_embeds[idx], self.srm_embeds[idx], self.labels[idx]
 
 
-def build_dataloader(config, split: str, augment: bool) -> DataLoader:
+def build_dataloader(config, split: str, augment: bool, use_meta: bool = False) -> DataLoader:
     splits_dir = REPO_ROOT / config["data"]["splits_dir"]
-    dataset = AIGCDataset(splits_dir / f"{split}.csv", augment=augment)
+    dataset = AIGCDataset(
+        splits_dir / f"{split}.csv", augment=augment, report_augmented=use_meta
+    )
     return DataLoader(
         dataset,
         batch_size=config["data"]["batch_size"],
@@ -240,7 +243,28 @@ def compute_pos_weight(dataset: AIGCDataset) -> torch.Tensor:
     return torch.tensor(n_neg / max(n_pos, 1), dtype=torch.float32)
 
 
-def real_train_step(model, optimizer, batch, device, *, backbone, branch, pos_weight=None) -> float:
+def _resolve_clip_embeddings(images, paths, augmented, *, backbone, clip_cache, device):
+    """CLIP embeddings for a batch: a cache lookup for clean samples whose
+    path is cached, a live (frozen) backbone.embed for the augmented ones and
+    cache misses. Falls back to a full live embed when no cache / no aug flags."""
+    if clip_cache is None or augmented is None:
+        return backbone.embed(images)
+    n = images.shape[0]
+    out = [None] * n
+    live_idx = []
+    for i in range(n):
+        if bool(augmented[i]) or paths[i] not in clip_cache:
+            live_idx.append(i)
+        else:
+            out[i] = clip_cache.get(paths[i]).to(device)
+    if live_idx:
+        live = backbone.embed(images[live_idx])
+        for j, i in enumerate(live_idx):
+            out[i] = live[j]
+    return torch.stack(out)
+
+
+def real_train_step(model, optimizer, batch, device, *, backbone, branch, pos_weight=None, clip_cache=None) -> float:
     """train_step for the real assembled pipeline: batch is a raw
     (images, labels, image_paths) triple from data.dataset.AIGCDataset, model
     is the nn.ModuleDict from build_model(), backbone is the frozen
@@ -249,14 +273,21 @@ def real_train_step(model, optimizer, batch, device, *, backbone, branch, pos_we
     CLIP embeddings are computed with no_grad inside CLIPBackbone.embed
     (frozen); SRM embeddings are computed with grad enabled so
     model["artifact_branch"]'s trainable CNN actually trains."""
-    images, labels, _ = batch
+    images, labels, paths, *rest = batch
+    augmented = rest[0] if rest else None
     images = images.to(device)
     labels = labels.to(device).float()  # AIGCDataset yields plain int labels; BCEWithLogitsLoss needs float
     if pos_weight is not None:
         pos_weight = pos_weight.to(device)
 
     optimizer.zero_grad()
-    clip_embed = backbone.embed(images) if branch != "artifact_only" else None
+    clip_embed = (
+        _resolve_clip_embeddings(
+            images, paths, augmented, backbone=backbone, clip_cache=clip_cache, device=device
+        )
+        if branch != "artifact_only"
+        else None
+    )
     srm_embed = model["artifact_branch"].embed(images) if branch != "clip_only" else None
     logits = model["fusion_head"](clip_embed, srm_embed)
     loss = F.binary_cross_entropy_with_logits(logits, labels, pos_weight=pos_weight)
@@ -324,6 +355,12 @@ def main():
     parser.add_argument(
         "--branch", choices=["full", "clip_only", "artifact_only"], default="full"
     )
+    parser.add_argument(
+        "--augment",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="train-time augmentation (default on; --no-augment for a clean baseline)",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -352,13 +389,32 @@ def main():
         else:
             print("no checkpoint found under checkpoint_dir, starting fresh")
 
-    # No-aug baseline: augment=False. Real full-scale runs will want
-    # augment=True and a CLIP embedding cache lookup for clean samples — out
-    # of scope for this tiny end-to-end smoke run.
-    dataloader = build_dataloader(config, split="train", augment=False)
+    # CLIP embeddings for clean (non-augmented) samples are the same every
+    # epoch (frozen backbone) — serve them from the precomputed cache if one
+    # exists, and only run the ViT live for the augmented ~half + cache misses.
+    # Build it with: python data/cache_clip_embeddings.py --config <config>
+    clip_cache = None
+    if args.branch != "artifact_only":
+        cache_dir = REPO_ROOT / "data" / "cache" / "clip_embeddings"
+        if CLIPEmbeddingCache.npz_path(cache_dir, "train").exists():
+            clip_cache = CLIPEmbeddingCache.load(cache_dir, "train")
+            print(f"CLIP embedding cache: {len(clip_cache)} entries")
+        else:
+            print(
+                "no CLIP embedding cache at data/cache/clip_embeddings/train.npz "
+                "— embedding live every step (slow); run data/cache_clip_embeddings.py"
+            )
+
+    dataloader = build_dataloader(
+        config, split="train", augment=args.augment, use_meta=clip_cache is not None
+    )
     pos_weight = compute_pos_weight(dataloader.dataset)
     step_fn = functools.partial(
-        real_train_step, backbone=backbone, branch=args.branch, pos_weight=pos_weight
+        real_train_step,
+        backbone=backbone,
+        branch=args.branch,
+        pos_weight=pos_weight,
+        clip_cache=clip_cache,
     )
     train(
         model,

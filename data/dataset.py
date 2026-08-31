@@ -30,11 +30,20 @@ CANONICAL_SIZE = (224, 224)  # matches CLIP ViT-B/16's native input resolution
 
 
 class AIGCDataset(Dataset):
-    def __init__(self, split_csv: str, augment: bool = False, apply_prob: float = 0.5):
+    def __init__(
+        self,
+        split_csv: str,
+        augment: bool = False,
+        apply_prob: float = 0.5,
+        report_augmented: bool = False,
+    ):
         with open(split_csv, newline="") as f:
             self.samples = [(row["image_path"], int(row["label"])) for row in csv.DictReader(f)]
         self.augment = augment
         self.apply_prob = apply_prob
+        # When True, __getitem__ yields a 4th element: whether this sample was
+        # augmented this epoch (so training can skip the CLIP cache for it).
+        self.report_augmented = report_augmented
 
     def __len__(self):
         return len(self.samples)
@@ -43,11 +52,14 @@ class AIGCDataset(Dataset):
         image_path, label = self.samples[idx]
         image = Image.open(resolve_image_path(image_path)).convert("RGB")
 
+        augmented = False
         if self.augment:
-            image = transforms.random_transform(image, self.apply_prob)
+            image, augmented = transforms.random_transform_report(image, self.apply_prob)
 
         image = image.resize(CANONICAL_SIZE, Image.BILINEAR)
         array = np.asarray(image, dtype=np.float32) / 255.0
         image_tensor = torch.from_numpy(array).permute(2, 0, 1).contiguous()
 
+        if self.report_augmented:
+            return image_tensor, label, image_path, augmented
         return image_tensor, label, image_path
