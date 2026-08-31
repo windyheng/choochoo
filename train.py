@@ -71,11 +71,21 @@ def get_rng_state() -> dict:
 
 
 def set_rng_state(state: dict) -> None:
-    random.setstate(state["python"])
-    np.random.set_state(state["numpy"])
-    torch.set_rng_state(state["torch"])
-    if torch.cuda.is_available() and "torch_cuda" in state:
-        torch.cuda.set_rng_state_all(state["torch_cuda"])
+    """Restores RNG state saved by get_rng_state — only affects exact
+    reproducibility of the random augmentation sequence across a resume, not
+    training correctness. A checkpoint resumed on a different torch/numpy
+    version than it was saved on (e.g. trained on Colab, resumed on Kaggle)
+    can fail to deserialize here; that's a real cross-environment scenario,
+    not a hypothetical, so it's logged and skipped rather than crashing the
+    whole resume over a non-essential reproducibility guarantee."""
+    try:
+        random.setstate(state["python"])
+        np.random.set_state(state["numpy"])
+        torch.set_rng_state(state["torch"])
+        if torch.cuda.is_available() and "torch_cuda" in state:
+            torch.cuda.set_rng_state_all(state["torch_cuda"])
+    except (TypeError, ValueError, RuntimeError) as e:
+        print(f"warning: could not restore RNG state ({e!r}) — resuming with a fresh RNG state instead")
 
 
 def checkpoint_path_for_step(checkpoint_dir, global_step: int) -> Path:

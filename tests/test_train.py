@@ -80,6 +80,18 @@ def test_rng_state_roundtrip():
     assert torch.equal(a[2], b[2])
 
 
+def test_set_rng_state_tolerates_incompatible_torch_state(capsys):
+    # Simulates a checkpoint saved on a different torch/numpy version than
+    # it's being resumed on (e.g. Colab -> Kaggle) — must warn and continue,
+    # not crash the whole resume over a non-essential reproducibility guarantee.
+    state = train.get_rng_state()
+    state["torch"] = "not a valid rng state"  # wrong type, like the real cross-env failure
+
+    train.set_rng_state(state)  # must not raise
+
+    assert "could not restore RNG state" in capsys.readouterr().out
+
+
 def test_train_checkpoints_at_configured_step_interval(tmp_path):
     model = _tiny_model()
     optimizer = _tiny_optimizer(model)
