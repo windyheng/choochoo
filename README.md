@@ -19,6 +19,27 @@ noise, color jitter, center-crop). Built for track #5 - Robust Detection of AI�
   design: [`docs/specs/2026-08-29-fusion-head-design.md`](docs/specs/2026-08-29-fusion-head-design.md))
   are all implemented against it now.
 
+## Tech stack
+
+- **Development tools**: VS Code (local development), Google Colab and Kaggle
+  Notebooks (free GPU for training — see [`notebooks/`](notebooks/)), Jupyter,
+  `pytest` (110 tests, including real non-mocked model integration tests).
+- **Models**: CLIP ViT-B/16 (`openai` pretrained weights, via
+  [`open_clip`](https://github.com/mlfoundations/open_clip), frozen) for the
+  semantic branch; a fixed SRM high-pass filter bank (classical, not learned)
+  feeding a shallow CNN for the artifact branch. See
+  [`docs/specs/2026-08-26-aigc-detection-design.md`](docs/specs/2026-08-26-aigc-detection-design.md).
+- **APIs**: HuggingFace Hub API (CLIP weights, SID_Set dataset), Kaggle API
+  (CIFAKE dataset), Weights & Biases API (training run tracking).
+- **Libraries/frameworks**: PyTorch, torchvision, `open_clip_torch`,
+  OpenCV, scikit-learn, `pytorch-grad-cam`, matplotlib, `huggingface_hub`,
+  `kaggle`, `wandb`, PyYAML, pyarrow, `python-dotenv` — see
+  [`requirements.txt`](requirements.txt) for exact versions.
+- **Datasets & assets**: SID_Set (HuggingFace), CIFAKE (Kaggle), WildFake
+  (ModelScope, celebahq + DDIM subset) for training; COCO val2017 + DALL·E
+  Advanced for demo/validation only, never used for training or
+  hyperparameter selection. See the design doc for full details and links.
+
 ## Setup
 
 ```bash
@@ -100,7 +121,7 @@ explainability.py  CLIP attention-rollout + Grad-CAM overlays, SRM residual viz
 error_analysis.py FP/FN mining and bucketing by transform/severity
 configs/         training config (YAML)
 docs/            design specs (main design, fusion-head design) + branch interface contract
-notebooks/       demo notebook for the walkthrough video (not yet built)
+notebooks/       train_colab.ipynb / train_kaggle.ipynb (GPU training); no demo/walkthrough notebook yet
 results/         robustness table, error-analysis thumbnails
 tests/           pytest — 110 tests, including real (non-mocked) model integration tests
 ```
@@ -148,8 +169,18 @@ tuning — revisit once a more-trained checkpoint's FPR/FNR profile exists.
 **Error analysis**: see [`docs/error_analysis_note.md`](docs/error_analysis_note.md)
 for the full write-up (representative FP/FN patterns, trade-off discussion).
 
-Known limitations independent of training progress:
+See [Limitations & what we'd improve](#limitations--what-wed-improve) below
+for the full reflection.
 
+## Limitations & what we'd improve
+
+Known limitations, independent of training progress:
+
+- **Training is incomplete.** The current checkpoint stopped at step 4,200 of
+  the planned 14,150 (free Kaggle/Colab GPU quota ran out, not convergence).
+- **Only 10 of the 16 required robustness conditions have been evaluated**
+  (missing: noise ×3 severities, color jitter, center crop, the combined
+  resize→JPEG condition) — same GPU-quota constraint.
 - **Individual-transform robustness only.** Per the brief, transforms are
   evaluated individually (clean, then each transform/severity in isolation);
   only one combined condition (resize→JPEG, simulating a repost pipeline) is
@@ -168,6 +199,12 @@ steps — the blur/resize FNR gap looks like it would improve most from this;
 (2) run the remaining 6 conditions (noise, color jitter, crop, combined) for
 a true 16-condition score; (3) train the two ablation branches for the
 CLIP-vs-SRM contribution comparison the design was built to answer.
+
+## Demo video
+
+_TBD — short end-to-end walkthrough (inference on a sample image directory,
+the explainability overlays, and the robustness results above), uploaded to
+YouTube as public and linked here and in the Devpost submission._
 
 ## Team & contributions
 
