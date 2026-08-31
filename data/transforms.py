@@ -97,15 +97,23 @@ _DISPATCH = {
 }
 
 
+def random_transform_report(image: Image.Image, apply_prob: float) -> tuple[Image.Image, bool]:
+    """Like `random_transform`, but also returns whether a transform was
+    actually applied. Training uses this to decide whether a sample's cached
+    (clean) CLIP embedding is still valid — an augmented image needs a live
+    re-embed (see train.py / data/clip_embedding_cache.py)."""
+    if random.random() > apply_prob:
+        return image.copy(), False
+    name = random.choice(list(TRANSFORM_SEVERITIES))
+    severity = random.choice(TRANSFORM_SEVERITIES[name])
+    return apply_named(image, name, severity), True
+
+
 def random_transform(image: Image.Image, apply_prob: float) -> Image.Image:
     """Randomly applies one transform family at a random severity, or leaves
     the image clean with probability (1 - apply_prob). Used for train-time
     augmentation."""
-    if random.random() > apply_prob:
-        return image.copy()
-    name = random.choice(list(TRANSFORM_SEVERITIES))
-    severity = random.choice(TRANSFORM_SEVERITIES[name])
-    return apply_named(image, name, severity)
+    return random_transform_report(image, apply_prob)[0]
 
 
 def apply_named(image: Image.Image, name: str, severity) -> Image.Image:
