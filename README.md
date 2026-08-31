@@ -47,7 +47,7 @@ Datasets (see the design doc for full details and links):
 
 ```bash
 python data/prepare_datasets.py --config configs/train.yaml
-python train.py --config configs/train.yaml   # needs a GPU (e.g. Colab) — CPU-only is impractically slow for 90k+ images
+python train.py --config configs/train.yaml   # needs a GPU (Colab or Kaggle notebooks both work — see notebooks/) — CPU-only is impractically slow for 90k+ images
 python evaluate.py --checkpoint <path> --eval_csv data/cache/splits/test.csv --out results/robustness_table.csv
 python infer.py --input_dir <image_dir> --out preds.json --checkpoint <path>
 ```
@@ -93,7 +93,7 @@ generated" — so it needs a `train.py` checkpoint. Run it on the FP/FN images
 data/            dataset download/prep, shared transforms (train-aug + eval), Dataset
                   class, path-portability helpers (data/paths.py), CLIP embedding cache
 models/          CLIP branch, SRM artifact branch, fusion head — all implemented
-train.py         training loop + checkpoint/resume (Colab-safe), wired to real data
+train.py         training loop + checkpoint/resume (Colab/Kaggle-safe), wired to real data
 evaluate.py      robustness matrix across all transforms/severities + ablations
 infer.py         required inference script (image dir -> JSON preds)
 explainability.py  CLIP attention-rollout + Grad-CAM overlays, SRM residual viz
@@ -105,39 +105,69 @@ results/         robustness table, error-analysis thumbnails
 tests/           pytest — 110 tests, including real (non-mocked) model integration tests
 ```
 
-## Limitations & future work
+## Robustness Evaluation Summary
 
-**Current status (as of 2026-08-30):** the full pipeline is implemented and
-tested end-to-end — CLIP branch, SRM branch, fusion head (per
-[`docs/specs/2026-08-29-fusion-head-design.md`](docs/specs/2026-08-29-fusion-head-design.md):
-`BatchNorm1d` + `Dropout`, with a `temperature` buffer for post-training Platt
-scaling), `train.py` wired to the real dataset and CLIP embedding cache, and
-`infer.py`/`evaluate.py` wired to load a real `train.py` checkpoint and run
-actual inference. **What's still missing is the training run itself** — no
-checkpoint has been produced yet (CPU-only locally is impractical for
-90k+ training images; needs to run on a GPU, e.g. Colab). The sections below
-will be filled in with actual numbers once that run produces one — see the design doc's error-analysis section for what to look for
-(FP/FN clustering by transform severity, chosen operating threshold and its
-FPR/FNR trade-off).
+**Current status (as of 2026-08-31):** first real results, from the checkpoint
+trained to **step 4,200 of the planned 14,150** (10 epochs — training was
+stopped early by running out of free Kaggle/Colab GPU quota, not by
+convergence; expect these numbers to improve with more training). Evaluated
+against the full 19,410-image held-out test set, but only **10 of the
+required 16 conditions** completed before the same GPU-quota constraint
+forced a stop: `clean` + all 4 JPEG severities + all 3 blur severities + both
+resize severities. **Not yet evaluated**: noise (3 severities), color jitter,
+center crop, and the combined resize→JPEG condition — see
+[`results/robustness_table.csv`](results/robustness_table.csv) for the raw
+data once those land.
 
-Known limitations independent of a trained checkpoint:
+| Condition | AUROC | Accuracy | FPR | FNR |
+|---|---|---|---|---|
+| clean | 0.996 | 0.969 | 0.018 | 0.045 |
+| jpeg_quality_90 | 0.996 | 0.965 | 0.016 | 0.055 |
+| jpeg_quality_70 | 0.995 | 0.963 | 0.021 | 0.053 |
+| jpeg_quality_50 | 0.989 | 0.940 | 0.025 | 0.096 |
+| jpeg_quality_30 | 0.983 | 0.914 | 0.025 | 0.149 |
+| blur_sigma_0.5 | 0.993 | 0.893 | 0.004 | 0.213 |
+| blur_sigma_1.0 | 0.907 | 0.656 | 0.006 | 0.689 |
+| blur_sigma_2.0 | 0.758 | 0.643 | 0.076 | 0.644 |
+| resize_scale_0.5 | 0.859 | 0.657 | 0.012 | 0.683 |
+| resize_scale_0.25 | 0.750 | 0.650 | 0.115 | 0.590 |
+
+**Combined AUC (clean + mean of the 9 evaluated transformed conditions): 0.955**
+— caveat: this excludes noise/color-jitter/crop entirely, so it reads more
+optimistic than the true 16-condition score would once those are run.
+
+**Operating threshold: kept at the default 0.5**, not tuned down. FPR is low
+across every evaluated condition (worst case 11.5% at the most extreme
+transform tested, typically under 2.5%) — appropriate for a moderation
+use-case where wrongly flagging a real user's photo carries a real
+trust/reputation cost. The weak spot is FNR under blur/resize (see the error
+analysis note below), which looks like a training-progress gap rather than a
+calibration problem, so more training is the better fix, not threshold
+tuning — revisit once a more-trained checkpoint's FPR/FNR profile exists.
+
+**Error analysis**: see [`docs/error_analysis_note.md`](docs/error_analysis_note.md)
+for the full write-up (representative FP/FN patterns, trade-off discussion).
+
+Known limitations independent of training progress:
 
 - **Individual-transform robustness only.** Per the brief, transforms are
   evaluated individually (clean, then each transform/severity in isolation);
   only one combined condition (resize→JPEG, simulating a repost pipeline) is
-  included as a bonus differentiator, not an exhaustive combination sweep.
+  included as a bonus differentiator, not an exhaustive combination sweep —
+  and that combined condition wasn't reached in this run either (see above).
 - **Ablation branches (`clip_only`/`artifact_only`) are separately-trained
   models**, not one model with post-hoc ablation — `train.py --branch
   clip_only|artifact_only` must each be run and checkpointed independently
-  before `evaluate.py`'s ablation comparison can run.
+  before `evaluate.py`'s ablation comparison can run. Not done yet.
 - **Class balance across dataset sources isn't verified yet.** CIFAKE is
   50/50, but SID_Set/WildFake's true balance hasn't been checked against
   `compute_pos_weight`'s output on a real run.
 
-_To fill in once a real checkpoint exists: representative FP/FN examples per
-transform/severity bucket, the chosen operating threshold and why (FPR/FNR
-trade-off for a moderation use-case), and what the two-branch ablation
-actually shows about CLIP vs. SRM contribution._
+**With more time**, in priority order: (1) finish training to the full 14,150
+steps — the blur/resize FNR gap looks like it would improve most from this;
+(2) run the remaining 6 conditions (noise, color jitter, crop, combined) for
+a true 16-condition score; (3) train the two ablation branches for the
+CLIP-vs-SRM contribution comparison the design was built to answer.
 
 ## Team & contributions
 
