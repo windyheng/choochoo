@@ -23,11 +23,27 @@ callable, so they're already fully testable. `load_eval_samples` and
 infer.py's load_model/predict — see its docstring) but still need an actual
 trained checkpoint from train.py to produce meaningful (non-random) results.
 
-`collect_predictions` dumps one row per (sample, condition) — image_path,
-label, condition, pred — to results/predictions.csv. This is the input
-error_analysis.py mines for representative false positives/negatives; the
-aggregate robustness_table.csv (metrics only, no image_path) can't support
-that since it has no per-image trace.
+Writes one row per (sample, condition) — image_path, label, condition,
+pred — to results/predictions.csv. This is the input error_analysis.py
+mines for representative false positives/negatives; the aggregate
+robustness_table.csv (metrics only, no image_path) can't support that since
+it has no per-image trace.
+
+`main()` drives both files through `run_resumable`, which processes one
+(branch, condition) pair at a time and appends its results immediately,
+skipping pairs already present in an existing robustness_table.csv — a run
+covering the full test set across ~16 conditions takes long enough (hours,
+depending on hardware) that surviving an interruption (e.g. a Colab
+disconnect) by re-running the same command, rather than restarting from
+scratch, matters in practice. This also fixes a real inefficiency the
+older evaluate_condition/collect_predictions split had: the "full" branch's
+images used to be scored twice per condition (once for metrics via
+run_ablation, once for predictions via collect_predictions) — run_resumable
+scores each image once and derives both outputs from that same pass.
+`evaluate_condition`/`build_robustness_matrix`/`run_ablation`/
+`collect_predictions`/`write_csv`/`write_predictions_csv` are kept as
+tested, still-useful standalone utilities but are no longer what `main()`
+calls.
 
 Run: python evaluate.py --checkpoint <path> --eval_csv <path> --out results/robustness_table.csv
 """
@@ -224,6 +240,105 @@ def write_predictions_csv(rows, out_path):
             writer.writerow({k: row[k] for k in fieldnames})
 
 
+ROBUSTNESS_FIELDNAMES = ["branch", "condition", "auroc", "accuracy", "fpr", "fnr"]
+PREDICTIONS_FIELDNAMES = ["image_path", "label", "condition", "branch", "pred"]
+
+
+def _append_csv(rows, out_path, fieldnames):
+    """Appends rows to out_path, writing the header only if the file doesn't
+    already exist. Used for incremental (per-condition) writes so a resumed
+    run doesn't need to re-hold the whole matrix in memory or clobber
+    already-written conditions."""
+    if not rows:
+        return
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not out_path.exists()
+    with out_path.open("a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row[k] for k in fieldnames})
+
+
+def _completed_conditions(table_path, branch):
+    """Reads an existing robustness_table.csv (if any) and returns the set
+    of condition labels already recorded for `branch` — lets a resumed run
+    skip conditions that finished before an interruption (e.g. a Colab
+    disconnect) instead of redoing the whole ~16-condition x full-test-set
+    pass from scratch."""
+    table_path = Path(table_path)
+    if not table_path.exists():
+        return set()
+    with table_path.open(newline="") as f:
+        return {row["condition"] for row in csv.DictReader(f) if row["branch"] == branch}
+
+
+def run_resumable(samples, predict_fns, threshold, predictions_path, table_path):
+    """Runs the robustness matrix condition-by-condition, appending each
+    condition's results to predictions_path/table_path as soon as it
+    finishes and skipping conditions already present there — so an
+    interrupted run can be resumed by just re-running the same command,
+    rather than losing all progress. Re-running against a different
+    checkpoint/eval_csv than the one that produced the existing files isn't
+    detected — delete or rename them first to start genuinely fresh.
+
+    Only "full" branch predictions are written per-sample (matches
+    collect_predictions' existing contract); every branch's aggregate
+    metrics are derived from the same _score_samples pass used for the
+    per-sample rows, so (unlike run_ablation + collect_predictions run
+    separately) the "full" branch's images are never scored twice."""
+    predictions_path = Path(predictions_path)
+    table_path = Path(table_path)
+
+    for branch, predict_fn in predict_fns.items():
+        done = _completed_conditions(table_path, branch)
+        for condition_label, steps in iter_conditions():
+            if condition_label in done:
+                continue
+
+            scored = _score_samples(samples, predict_fn, steps)
+
+            if branch == "full":
+                per_sample_rows = [
+                    {
+                        "image_path": str(image_path),
+                        "label": label,
+                        "condition": condition_label,
+                        "branch": branch,
+                        "pred": pred,
+                    }
+                    for image_path, label, pred in scored
+                ]
+                _append_csv(per_sample_rows, predictions_path, PREDICTIONS_FIELDNAMES)
+
+            metrics = compute_metrics(
+                [label for _, label, _ in scored], [pred for _, _, pred in scored], threshold
+            )
+            row = {"branch": branch, "condition": condition_label, **metrics}
+            _append_csv([row], table_path, ROBUSTNESS_FIELDNAMES)
+
+
+def read_robustness_table(path):
+    """Reads a robustness_table.csv back into build_robustness_matrix's row
+    format (numeric fields cast back from strings) — used after
+    run_resumable, which writes incrementally rather than keeping the whole
+    matrix in memory for combined_auc_summary to consume directly."""
+    with open(path, newline="") as f:
+        return [
+            {
+                "branch": row["branch"],
+                "condition": row["condition"],
+                "auroc": float(row["auroc"]),
+                "accuracy": float(row["accuracy"]),
+                "fpr": float(row["fpr"]),
+                "fnr": float(row["fnr"]),
+            }
+            for row in csv.DictReader(f)
+        ]
+
+
 def load_eval_samples(eval_csv: str):
     """Loads (image_path, label) pairs for the held-out eval split, in the
     image_path,label,source format written by
@@ -273,12 +388,9 @@ def main():
 
     samples = load_eval_samples(args.eval_csv)
     predict_fns = load_predict_fns(checkpoint_paths, args.config)
-    rows = run_ablation(samples, predict_fns, threshold=args.threshold)
-    write_csv(rows, args.out)
+    run_resumable(samples, predict_fns, args.threshold, args.predictions_out, args.out)
 
-    predictions = collect_predictions(samples, predict_fns["full"], branch="full")
-    write_predictions_csv(predictions, args.predictions_out)
-
+    rows = read_robustness_table(args.out)
     summary = combined_auc_summary(rows)
     for branch, metrics in summary.items():
         print(

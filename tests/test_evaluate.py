@@ -231,3 +231,126 @@ def test_write_csv_roundtrip(tmp_path):
     assert reader == [
         {"branch": "full", "condition": "clean", "auroc": "0.95", "accuracy": "0.9", "fpr": "0.05", "fnr": "0.1"}
     ]
+
+
+def test_completed_conditions_empty_when_file_missing(tmp_path):
+    assert evaluate._completed_conditions(tmp_path / "nope.csv", "full") == set()
+
+
+def test_completed_conditions_filters_by_branch(tmp_path):
+    table_path = tmp_path / "robustness_table.csv"
+    evaluate._append_csv(
+        [
+            {"branch": "full", "condition": "clean", "auroc": 0.9, "accuracy": 0.9, "fpr": 0.1, "fnr": 0.1},
+            {"branch": "clip_only", "condition": "clean", "auroc": 0.8, "accuracy": 0.8, "fpr": 0.2, "fnr": 0.2},
+        ],
+        table_path,
+        evaluate.ROBUSTNESS_FIELDNAMES,
+    )
+    assert evaluate._completed_conditions(table_path, "full") == {"clean"}
+    assert evaluate._completed_conditions(table_path, "clip_only") == {"clean"}
+    assert evaluate._completed_conditions(table_path, "artifact_only") == set()
+
+
+def test_append_csv_writes_header_once(tmp_path):
+    out_path = tmp_path / "out.csv"
+    evaluate._append_csv(
+        [{"branch": "full", "condition": "clean", "auroc": 0.9, "accuracy": 0.9, "fpr": 0.1, "fnr": 0.1}],
+        out_path,
+        evaluate.ROBUSTNESS_FIELDNAMES,
+    )
+    evaluate._append_csv(
+        [{"branch": "full", "condition": "jpeg_quality_90", "auroc": 0.8, "accuracy": 0.8, "fpr": 0.2, "fnr": 0.2}],
+        out_path,
+        evaluate.ROBUSTNESS_FIELDNAMES,
+    )
+    with out_path.open() as f:
+        lines = f.readlines()
+    assert lines[0].strip() == ",".join(evaluate.ROBUSTNESS_FIELDNAMES)
+    assert len(lines) == 3  # header + 2 data rows, no repeated header
+
+
+def test_run_resumable_scores_full_branch_samples_exactly_once(tmp_path, samples):
+    # The old code path (run_ablation + collect_predictions run separately)
+    # called predict_fn 2x per sample per condition for the "full" branch;
+    # run_resumable must call it exactly once.
+    call_count = {"n": 0}
+
+    def counting_predict_fn(image):
+        call_count["n"] += 1
+        return 0.5
+
+    n_conditions = len(list(evaluate.iter_conditions()))
+    evaluate.run_resumable(
+        samples, {"full": counting_predict_fn}, 0.5, tmp_path / "predictions.csv", tmp_path / "robustness_table.csv"
+    )
+    assert call_count["n"] == n_conditions * len(samples)
+
+
+def test_run_resumable_writes_predictions_only_for_full_branch(tmp_path, samples):
+    predictions_path = tmp_path / "predictions.csv"
+    table_path = tmp_path / "robustness_table.csv"
+
+    predict_fns = {"full": lambda img: 0.9, "clip_only": lambda img: 0.1}
+    evaluate.run_resumable(samples, predict_fns, 0.5, predictions_path, table_path)
+
+    with predictions_path.open() as f:
+        pred_rows = list(csv.DictReader(f))
+    with table_path.open() as f:
+        table_rows = list(csv.DictReader(f))
+
+    assert {r["branch"] for r in pred_rows} == {"full"}  # clip_only never dumps per-sample rows
+    assert {r["branch"] for r in table_rows} == {"full", "clip_only"}  # both get aggregate metrics
+
+
+def test_run_resumable_skips_conditions_already_in_table(tmp_path, samples):
+    predictions_path = tmp_path / "predictions.csv"
+    table_path = tmp_path / "robustness_table.csv"
+
+    calls = []
+
+    def tracking_predict_fn(image):
+        calls.append(1)
+        return 0.9
+
+    # Pre-seed the table as if "clean" already completed in a prior
+    # (interrupted) run — resuming must not re-score it.
+    evaluate._append_csv(
+        [{"branch": "full", "condition": "clean", "auroc": 1.0, "accuracy": 1.0, "fpr": 0.0, "fnr": 0.0}],
+        table_path,
+        evaluate.ROBUSTNESS_FIELDNAMES,
+    )
+
+    evaluate.run_resumable(samples, {"full": tracking_predict_fn}, 0.5, predictions_path, table_path)
+
+    n_conditions = len(list(evaluate.iter_conditions()))
+    # "clean" skipped -> (n_conditions - 1) conditions scored, not n_conditions
+    assert len(calls) == (n_conditions - 1) * len(samples)
+
+    with table_path.open() as f:
+        table_rows = list(csv.DictReader(f))
+    assert len(table_rows) == n_conditions  # the pre-seeded "clean" row plus the rest, no duplicate
+
+
+def test_read_robustness_table_roundtrip(tmp_path):
+    table_path = tmp_path / "robustness_table.csv"
+    evaluate._append_csv(
+        [
+            {"branch": "full", "condition": "clean", "auroc": 0.95, "accuracy": 0.9, "fpr": 0.05, "fnr": 0.1},
+            {
+                "branch": "full",
+                "condition": "jpeg_quality_90",
+                "auroc": float("nan"),
+                "accuracy": 0.5,
+                "fpr": 0.5,
+                "fnr": 0.5,
+            },
+        ],
+        table_path,
+        evaluate.ROBUSTNESS_FIELDNAMES,
+    )
+
+    rows = evaluate.read_robustness_table(table_path)
+
+    assert rows[0] == {"branch": "full", "condition": "clean", "auroc": 0.95, "accuracy": 0.9, "fpr": 0.05, "fnr": 0.1}
+    assert math.isnan(rows[1]["auroc"])
