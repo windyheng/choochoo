@@ -2,7 +2,7 @@
 
 Prototype that classifies images as AI-generated (AIGC) vs. authentic, robust to
 realistic post-processing (JPEG re-compression, blur, resize/thumbnailing,
-noise, color jitter, center-crop). Built for [hackathon name/track — fill in].
+noise, color jitter, center-crop). Built for track #5 - Robust Detection of AI‑Generated Images Under Real‑World Transformations.
 
 ## Overview
 
