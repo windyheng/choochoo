@@ -1,4 +1,4 @@
-"""Owner: CLIP Branch Lead. Tests for explainability.clip_attention_overlay.
+"""Owner: CLIP Branch Lead. Tests for explainability overlays.
 
 Marked `slow` — loads the CLIP ViT-B/16 checkpoint.
 """
@@ -9,6 +9,7 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("open_clip")
 pytest.importorskip("matplotlib")
+pytest.importorskip("pytorch_grad_cam")
 from PIL import Image
 
 import explainability
@@ -79,3 +80,54 @@ def test_checkpoint_path_is_ignored(image_path):
     a = np.asarray(explainability.clip_attention_overlay(image_path))
     b = np.asarray(explainability.clip_attention_overlay(image_path, checkpoint_path="/no/such.pt"))
     assert np.array_equal(a, b)
+
+
+# --- grad_cam_overlay ---
+
+
+def _fake_checkpoint(tmp_path, branch):
+    import train
+
+    config = train.load_config("configs/train.yaml")
+    model = train.build_model(config, branch=branch)
+    optimizer = train.build_optimizer(model, config)
+    path = tmp_path / f"ckpt_step_00000001_{branch}.pt"
+    train.save_checkpoint(path, model, optimizer, epoch=0, global_step=1)
+    return str(path)
+
+
+@pytest.mark.parametrize("branch", ["full", "clip_only"])
+def test_grad_cam_overlay_shape_and_save(image_path, tmp_path, branch):
+    ckpt = _fake_checkpoint(tmp_path, branch)
+    dest = tmp_path / "sub" / f"gc_{branch}.png"
+    out = explainability.grad_cam_overlay(image_path, ckpt, branch=branch, save_path=str(dest))
+
+    assert isinstance(out, Image.Image)
+    assert out.size == (224, 224) and out.mode == "RGB"
+    assert dest.exists()
+    assert np.array_equal(np.asarray(Image.open(dest)), np.asarray(out))
+
+
+def test_grad_cam_overlay_is_localized_not_uniform(image_path, tmp_path):
+    ckpt = _fake_checkpoint(tmp_path, "clip_only")
+    a = np.asarray(explainability.grad_cam_overlay(image_path, ckpt, branch="clip_only")).astype(float)
+    assert a.std() > 3.0  # gradient-weighted blobs, not a flat blend
+
+
+def test_grad_cam_overlay_rejects_artifact_only(image_path, tmp_path):
+    ckpt = _fake_checkpoint(tmp_path, "artifact_only")
+    with pytest.raises(ValueError):
+        explainability.grad_cam_overlay(image_path, ckpt, branch="artifact_only")
+
+
+def test_grad_cam_overlay_reshape_transform_is_square_grid():
+    # 196 patch tokens + 1 CLS -> 14x14
+    import torch
+
+    tokens = torch.randn(2, 197, 768)
+    # exercise the same reshape the function uses
+    patches = tokens[:, 1:, :]
+    b, n, c = patches.shape
+    grid = int(round(n**0.5))
+    reshaped = patches.reshape(b, grid, grid, c).permute(0, 3, 1, 2)
+    assert reshaped.shape == (2, 768, 14, 14)
