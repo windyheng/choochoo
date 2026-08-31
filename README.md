@@ -82,6 +82,11 @@ srm_residual_overlay('path/to/image.jpg').save('srm_overlay.png')
 semantic branch focuses on); `srm_overlay.png` shows the SRM branch's raw
 artifact-residual map.
 
+A third, `explainability.grad_cam_overlay(image_path, checkpoint_path)`, is
+prediction-specific — which regions pushed a *trained* model toward "AI-
+generated" — so it needs a `train.py` checkpoint. Run it on the FP/FN images
+`error_analysis.py` surfaces, for the error-analysis note and demo video.
+
 ## Repo layout
 
 ```
@@ -91,7 +96,7 @@ models/          CLIP branch, SRM artifact branch, fusion head — all implement
 train.py         training loop + checkpoint/resume (Colab-safe), wired to real data
 evaluate.py      robustness matrix across all transforms/severities + ablations
 infer.py         required inference script (image dir -> JSON preds)
-explainability.py  attention-rollout overlay (CLIP branch) + SRM residual viz — both work today
+explainability.py  CLIP attention-rollout + Grad-CAM overlays, SRM residual viz
 error_analysis.py FP/FN mining and bucketing by transform/severity
 configs/         training config (YAML)
 docs/            design specs (main design, fusion-head design) + branch interface contract
